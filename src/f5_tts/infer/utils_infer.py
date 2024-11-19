@@ -15,17 +15,19 @@ n_mel_channels = 100
 hop_length = 256
 cross_fade_duration = 0.15
 
+# Función para cargar el vocoder
 def load_vocoder():
     print("Cargando vocoder desde HuggingFace...")
     vocoder = Vocos.from_pretrained("charactr/vocos-mel-24khz").to(device)
     return vocoder
 
+# Función para cargar el modelo
 def load_model(ckpt_path, vocab_file):
     print("Cargando modelo...")
     vocab_char_map, vocab_size = get_tokenizer(vocab_file, "custom")
     model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_num_embeds=vocab_size, mel_dim=n_mel_channels)
     model = CFM(
-        transformer=CFM.Transformer(**model_cfg),
+        transformer=None,  # No usar Transformer directamente
         mel_spec_kwargs=dict(
             n_fft=1024,
             hop_length=hop_length,
@@ -37,6 +39,7 @@ def load_model(ckpt_path, vocab_file):
     model.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
     return model.to(device)
 
+# Función para procesar el audio de referencia y texto
 def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True):
     print("Procesando audio de referencia...")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
