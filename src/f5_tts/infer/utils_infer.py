@@ -7,6 +7,7 @@ import torchaudio
 from pydub import AudioSegment, silence
 from vocos import Vocos
 from f5_tts.model import CFM
+from f5_tts.model.modules import Transformer
 from f5_tts.model.utils import convert_char_to_pinyin, get_tokenizer
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -26,8 +27,12 @@ def load_model(ckpt_path, vocab_file):
     print("Cargando modelo...")
     vocab_char_map, vocab_size = get_tokenizer(vocab_file, "custom")
     model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_num_embeds=vocab_size, mel_dim=n_mel_channels)
+    
+    # Crear una instancia del transformer
+    transformer = Transformer(**model_cfg)
+
     model = CFM(
-        transformer=None,  # No usar Transformer directamente
+        transformer=transformer,
         mel_spec_kwargs=dict(
             n_fft=1024,
             hop_length=hop_length,
