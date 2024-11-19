@@ -16,27 +16,21 @@ from f5_tts.infer.utils_infer import (
     save_spectrogram,
 )
 
-# Configuración del vocoder y modelo
+# Configuración del dispositivo
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Cargar vocoder
 vocoder = load_vocoder()
 
 # Configuración del modelo
 model_ckpt_path = str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
 vocab_file_path = str(cached_path("hf://jpgallegoar/F5-Spanish/vocab.txt"))
 
-F5TTS_model = load_model(
-    model_ckpt_path,
-    vocab_file_path,
-    mel_spec_type="vocos",
-    ode_method="euler",
-    use_ema=True,
-    device=device,
-)
+F5TTS_model = load_model(model_ckpt_path, vocab_file_path)
 
 # Conversión de números a texto
 def traducir_numero_a_texto(texto):
     from num2words import num2words
-
     texto_separado = re.sub(r'([A-Za-z])(\d)', r'\1 \2', texto)
     texto_separado = re.sub(r'(\d)([A-Za-z])', r'\1 \2', texto_separado)
 
@@ -45,10 +39,9 @@ def traducir_numero_a_texto(texto):
         return num2words(int(numero), lang='es')
 
     texto_traducido = re.sub(r'\b\d+\b', reemplazar_numero, texto_separado)
-
     return texto_traducido
 
-# Inferencia en Gradio
+# Función de inferencia
 def infer(
     ref_audio_orig,
     ref_text,
@@ -77,7 +70,6 @@ def infer(
         device=device,
     )
 
-    # Eliminar silencios si es necesario
     if remove_silence:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
             sf.write(f.name, final_wave, final_sample_rate)
@@ -86,13 +78,11 @@ def infer(
             final_wave, _ = torchaudio.load(f.name)
         final_wave = final_wave.squeeze().cpu().numpy()
 
-    # Guardar espectrograma
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
         spectrogram_path = tmp_spectrogram.name
         save_spectrogram(combined_spectrogram, spectrogram_path)
 
     return (final_sample_rate, final_wave), spectrogram_path
-
 
 # Interfaz de Gradio
 with gr.Blocks() as app:
@@ -142,6 +132,5 @@ with gr.Blocks() as app:
         outputs=[audio_output, spectrogram_output],
     )
 
-# Iniciar Gradio
 if __name__ == "__main__":
     app.launch()
