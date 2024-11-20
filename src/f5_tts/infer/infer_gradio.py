@@ -3,11 +3,11 @@ import tempfile
 import gradio as gr
 import numpy as np
 import soundfile as sf
-import torch
 import torchaudio
 from cached_path import cached_path
-from vocos import Vocos
-from f5_tts.model import CFM
+from num2words import num2words
+
+from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
     load_model,
@@ -16,21 +16,20 @@ from f5_tts.infer.utils_infer import (
     save_spectrogram,
 )
 
-# Configuración del dispositivo
+# Configuración del vocoder y modelo
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# Cargar vocoder
 vocoder = load_vocoder()
 
 # Configuración del modelo
-model_ckpt_path = str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
-vocab_file_path = str(cached_path("hf://jpgallegoar/F5-Spanish/vocab.txt"))
-
-F5TTS_model = load_model(model_ckpt_path, vocab_file_path)
+F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
+F5TTS_model = load_model(
+    DiT,
+    F5TTS_model_cfg,
+    str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors")),
+)
 
 # Conversión de números a texto
 def traducir_numero_a_texto(texto):
-    from num2words import num2words
     texto_separado = re.sub(r'([A-Za-z])(\d)', r'\1 \2', texto)
     texto_separado = re.sub(r'(\d)([A-Za-z])', r'\1 \2', texto_separado)
 
@@ -38,99 +37,105 @@ def traducir_numero_a_texto(texto):
         numero = match.group()
         return num2words(int(numero), lang='es')
 
-    texto_traducido = re.sub(r'\b\d+\b', reemplazar_numero, texto_separado)
-    return texto_traducido
+    return re.sub(r'\b\d+\b', reemplazar_numero, texto_separado)
 
-# Función de inferencia
-def infer(
-    ref_audio_orig,
+# Función para procesar multi-habla
+def parse_speechtypes_text(gen_text):
+    pattern = r"\{(.*?)\}"  # Encuentra {tipo}
+    tokens = re.split(pattern, gen_text)
+
+    segments = []
+    current_style = "Regular"
+
+    for i in range(len(tokens)):
+        if i % 2 == 0:  # Texto
+            text = tokens[i].strip()
+            if text:
+                segments.append({"style": current_style, "text": text})
+        else:  # Tipo de habla
+            current_style = tokens[i].strip()
+
+    return segments
+
+def generate_multistyle_speech(
+    ref_audio,
     ref_text,
     gen_text,
+    speech_type_audios,
+    speech_type_texts,
     remove_silence,
-    cross_fade_duration=0.15,
-    speed=1.0,
+    speed,
 ):
-    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text)
+    # Crear diccionario de tipos de habla
+    speech_types = {"Regular": {"audio": ref_audio, "text": ref_text}}
+    for name, audio, text in zip(speech_type_audios.keys(), speech_type_audios.values(), speech_type_texts.values()):
+        if audio:
+            speech_types[name] = {"audio": audio, "text": text}
 
-    if not gen_text.startswith(" "):
-        gen_text = " " + gen_text
-    if not gen_text.endswith(". "):
-        gen_text += ". "
+    # Procesar segmentos de multi-habla
+    segments = parse_speechtypes_text(gen_text)
+    generated_audio_segments = []
+    current_style = "Regular"
 
-    gen_text = traducir_numero_a_texto(gen_text)
+    for segment in segments:
+        style = segment["style"]
+        text = segment["text"]
 
-    final_wave, final_sample_rate, combined_spectrogram = infer_process(
-        ref_audio,
-        ref_text,
-        gen_text,
-        F5TTS_model,
-        vocoder,
-        cross_fade_duration=cross_fade_duration,
-        speed=speed,
-        device=device,
-    )
+        if style in speech_types:
+            current_style = style
+        else:
+            current_style = "Regular"
 
-    if remove_silence:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-            sf.write(f.name, final_wave, final_sample_rate)
-            from f5_tts.infer.utils_infer import remove_silence_for_generated_wav
-            remove_silence_for_generated_wav(f.name)
-            final_wave, _ = torchaudio.load(f.name)
-        final_wave = final_wave.squeeze().cpu().numpy()
+        audio_data = speech_types[current_style]["audio"]
+        text_data = speech_types[current_style].get("text", "")
 
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
-        spectrogram_path = tmp_spectrogram.name
-        save_spectrogram(combined_spectrogram, spectrogram_path)
-
-    return (final_sample_rate, final_wave), spectrogram_path
-
-# Interfaz de Gradio
-with gr.Blocks() as app:
-    gr.Markdown("# F5-TTS Multi-Habla en Español")
-    with gr.Row():
-        ref_audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
-        gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
-    with gr.Accordion("Configuraciones Avanzadas", open=False):
-        ref_text_input = gr.Textbox(
-            label="Texto de Referencia",
-            info="Opcional: Transcribe automáticamente si está vacío.",
-            lines=2,
+        audio, _ = infer_process(
+            audio_data, text_data, text, F5TTS_model, vocoder, speed=speed, remove_silence=remove_silence, device=device
         )
-        remove_silence = gr.Checkbox(
-            label="Eliminar Silencios",
-            info="Elimina silencios largos del audio generado.",
-            value=False,
-        )
-        speed_slider = gr.Slider(
-            label="Velocidad",
-            minimum=0.3,
-            maximum=2.0,
-            value=1.0,
-            step=0.1,
-        )
-        cross_fade_duration_slider = gr.Slider(
-            label="Duración del Cross-Fade (s)",
-            minimum=0.0,
-            maximum=1.0,
-            value=0.15,
-            step=0.01,
-        )
+        sr, audio_wave = audio
+        generated_audio_segments.append(audio_wave)
+
+    final_audio_data = np.concatenate(generated_audio_segments)
+    return sr, final_audio_data
+
+# Interfaz Gradio
+with gr.Blocks() as app_multistyle:
+    gr.Markdown("# Generación de Múltiples Tipos de Habla")
+    ref_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
+    ref_text = gr.Textbox(label="Texto de Referencia Regular", lines=2)
+    gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
+
+    max_speech_types = 10
+    speech_type_names = []
+    speech_type_audios = []
+    speech_type_texts = []
+
+    for i in range(max_speech_types):
+        with gr.Row(visible=False) as row:
+            name_input = gr.Textbox(label="Nombre del Tipo de Habla")
+            audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
+            text_input = gr.Textbox(label="Texto de Referencia", lines=2)
+        speech_type_names.append(name_input)
+        speech_type_audios.append(audio_input)
+        speech_type_texts.append(text_input)
+
+    add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
     generate_btn = gr.Button("Generar", variant="primary")
-    audio_output = gr.Audio(label="Audio Generado")
-    spectrogram_output = gr.Image(label="Espectrograma")
+    output_audio = gr.Audio(label="Audio Sintetizado")
 
+    # Lógica para generar multi-habla
     generate_btn.click(
-        infer,
+        generate_multistyle_speech,
         inputs=[
-            ref_audio_input,
-            ref_text_input,
+            ref_audio,
+            ref_text,
             gen_text_input,
-            remove_silence,
-            cross_fade_duration_slider,
-            speed_slider,
+            {f"speech_type_{i}": audio for i, audio in enumerate(speech_type_audios)},
+            {f"text_{i}": text for i, text in enumerate(speech_type_texts)},
         ],
-        outputs=[audio_output, spectrogram_output],
+        outputs=output_audio,
     )
 
+# Ejecutar la aplicación
 if __name__ == "__main__":
-    app.launch()
+    app_multistyle.launch()
