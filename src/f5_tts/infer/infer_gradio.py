@@ -1,9 +1,5 @@
-# ruff: noqa: E402
-# Above allows ruff to ignore E402: module level import not at top of file
-
 import re
 import tempfile
-
 import click
 import gradio as gr
 import numpy as np
@@ -425,8 +421,8 @@ with gr.Blocks() as app:
     gr.Markdown(
         """
 # Spanish-F5
-
 Esta es una interfaz web para F5 TTS, con un finetuning para poder clonar voces
+"""
     )
     gr.TabbedInterface(
         [app_multistyle],
