@@ -90,6 +90,7 @@ def parse_speechtypes_text(gen_text):
     return segments
 
 
+# Lista global de tipos de habla guardados
 saved_speech_types = [{"name": "Regular", "audio": None, "text": None}]  # Regular incluido por defecto
 
 
@@ -108,6 +109,11 @@ def delete_speech_type(name):
     return f"Eliminado: {name}"
 
 
+def update_saved_speech_types():
+    """Actualiza la lista de tipos guardados en el menú desplegable."""
+    return gr.update(choices=[s["name"] for s in saved_speech_types])
+
+
 def generate_text_with_type(name):
     """Genera un bloque de texto con un tipo de habla seleccionado."""
     return f"{{{name}}} "
@@ -116,32 +122,38 @@ def generate_text_with_type(name):
 with gr.Blocks() as app:
     gr.Markdown("# Generación de Múltiples Tipos de Habla")
 
+    # Regular speech type (always visible)
     with gr.Row():
-        regular_name = gr.Textbox(value="Regular", label="Nombre del Tipo de Habla")
+        regular_name = gr.Textbox(value="Regular", label="Nombre del Tipo de Habla", interactive=False)
         regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
         regular_ref_text = gr.Textbox(label="Texto de Referencia (Regular)", lines=2)
+        regular_save_btn = gr.Button("Guardar")
+        regular_delete_btn = gr.Button("Eliminar", interactive=False)  # Regular no se puede eliminar
 
     max_speech_types = 10
-    speech_type_count = gr.State(value=0)
     speech_type_rows = []
     speech_type_names = []
     speech_type_audios = []
     speech_type_ref_texts = []
+    speech_type_save_btns = []
+    speech_type_delete_btns = []
 
+    # Dynamic speech types
     for _ in range(max_speech_types):
         row = gr.Row(visible=False)
         with row:
             name_input = gr.Textbox(label="Nombre del Tipo de Habla")
             audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
             ref_text_input = gr.Textbox(label="Texto de Referencia", lines=2)
+            save_btn = gr.Button("Guardar")
+            delete_btn = gr.Button("Eliminar")
         speech_type_rows.append(row)
         speech_type_names.append(name_input)
         speech_type_audios.append(audio_input)
         speech_type_ref_texts.append(ref_text_input)
+        speech_type_save_btns.append(save_btn)
+        speech_type_delete_btns.append(delete_btn)
 
-    add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
-    save_speech_type_btn = gr.Button("Guardar Tipo de Habla")
-    delete_speech_type_btn = gr.Button("Eliminar Tipo de Habla")
     saved_speech_types_dropdown = gr.Dropdown(label="Seleccionar Tipo Guardado", choices=[], interactive=True)
     add_text_with_speech_type_btn = gr.Button("Agregar Texto con Tipo de Habla")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
@@ -149,29 +161,27 @@ with gr.Blocks() as app:
     audio_output = gr.Audio(label="Audio Sintetizado")
     progress_bar = gr.Textbox(label="Progreso", interactive=False)
 
-    def toggle_speech_type_row(count):
+    def toggle_speech_type_row(index):
         """Muestra u oculta filas adicionales de tipos de habla."""
-        if count < max_speech_types:
-            updates = [gr.update(visible=True) if i == count else gr.update() for i in range(max_speech_types)]
-            return count + 1, *updates
-        return count, *[gr.update() for _ in range(max_speech_types)]
+        return gr.update(visible=True)
 
-    add_speech_type_btn.click(toggle_speech_type_row, inputs=[speech_type_count], outputs=[speech_type_count, *speech_type_rows])
+    for i, (save_btn, delete_btn) in enumerate(zip(speech_type_save_btns, speech_type_delete_btns)):
+        save_btn.click(
+            save_speech_type,
+            inputs=[speech_type_names[i], speech_type_audios[i], speech_type_ref_texts[i]],
+            outputs=progress_bar,
+            postprocess=update_saved_speech_types,
+        )
+        delete_btn.click(
+            delete_speech_type,
+            inputs=speech_type_names[i],
+            outputs=progress_bar,
+            postprocess=update_saved_speech_types,
+        )
 
-    def update_saved_speech_types():
-        """Actualiza la lista de tipos guardados en el menú desplegable."""
-        return gr.update(choices=[s["name"] for s in saved_speech_types])
-
-    save_speech_type_btn.click(
+    regular_save_btn.click(
         save_speech_type,
         inputs=[regular_name, regular_audio, regular_ref_text],
-        outputs=progress_bar,
-        postprocess=update_saved_speech_types,
-    )
-
-    delete_speech_type_btn.click(
-        delete_speech_type,
-        inputs=saved_speech_types_dropdown,
         outputs=progress_bar,
         postprocess=update_saved_speech_types,
     )
