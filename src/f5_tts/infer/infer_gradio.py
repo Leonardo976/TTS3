@@ -1,14 +1,13 @@
-# ruff: noqa: E402
 import os
 import re
 import tempfile
-import click
 import gradio as gr
 import numpy as np
 import soundfile as sf
 import torchaudio
 from cached_path import cached_path
 from num2words import num2words
+from faster_whisper import WhisperModel
 from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
@@ -16,12 +15,13 @@ from f5_tts.infer.utils_infer import (
     preprocess_ref_audio_text,
     infer_process,
     remove_silence_for_generated_wav,
+    save_spectrogram,
 )
 
 # Silenciar logs de TensorFlow para evitar mensajes excesivos
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-# Cargar vocoder
+# Cargar el vocoder
 vocoder = load_vocoder()
 
 # Configuración del modelo F5-TTS
@@ -30,7 +30,24 @@ F5TTS_ema_model = load_model(
     DiT, F5TTS_model_cfg, str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
 )
 
+# Cargar el modelo Faster Whisper
+whisper_model = WhisperModel("large-v2", device="cuda" if torch.cuda.is_available() else "cpu")
+
+def transcribe_audio_with_whisper(audio_path):
+    """
+    Transcribe audio usando Faster Whisper.
+    """
+    try:
+        segments, info = whisper_model.transcribe(audio_path, language="es")
+        return " ".join([segment.text for segment in segments])
+    except Exception as e:
+        print(f"Error al transcribir el audio con Faster Whisper: {e}")
+        return "Transcripción no disponible."
+
 def traducir_numero_a_texto(texto):
+    """
+    Convierte los números en el texto a palabras.
+    """
     texto_separado = re.sub(r'([A-Za-z])(\d)', r'\1 \2', texto)
     texto_separado = re.sub(r'(\d)([A-Za-z])', r'\1 \2', texto_separado)
 
@@ -41,6 +58,9 @@ def traducir_numero_a_texto(texto):
     return re.sub(r'\b\d+\b', reemplazar_numero, texto_separado)
 
 def parse_emotions_text(gen_text):
+    """
+    Divide el texto en segmentos por emociones usando el formato {Emoción}.
+    """
     pattern = r"\{(.*?)\}"
     tokens = re.split(pattern, gen_text)
     segments = []
@@ -57,6 +77,17 @@ def parse_emotions_text(gen_text):
     return segments
 
 def infer_multi_emotion(ref_audio_orig, ref_text, gen_text, emotions_audio_map, remove_silence=False, show_info=print):
+    """
+    Procesa el texto y genera audio con múltiples emociones.
+    Si no hay texto de referencia, utiliza Faster Whisper para transcribir.
+    """
+    # Transcribir el texto de referencia si no está presente
+    if not ref_text and ref_audio_orig:
+        print("Transcribiendo el texto de referencia con Faster Whisper...")
+        ref_text = transcribe_audio_with_whisper(ref_audio_orig)
+    
+    ref_text = ref_text or "Texto predeterminado."
+
     segments = parse_emotions_text(gen_text)
     generated_audio = []
 
@@ -64,13 +95,22 @@ def infer_multi_emotion(ref_audio_orig, ref_text, gen_text, emotions_audio_map, 
         emotion = segment["emotion"]
         text = segment["text"]
 
+        # Usar el audio y texto de referencia de la emoción correspondiente
         if emotion in emotions_audio_map:
             ref_audio = emotions_audio_map[emotion]["audio"]
-            ref_text_emotion = emotions_audio_map[emotion].get("ref_text", ref_text or "Texto predeterminado.")
+            ref_text_emotion = emotions_audio_map[emotion].get("ref_text", ref_text)
         else:
             ref_audio = emotions_audio_map["Regular"]["audio"]
-            ref_text_emotion = emotions_audio_map["Regular"].get("ref_text", ref_text or "Texto predeterminado.")
+            ref_text_emotion = emotions_audio_map["Regular"].get("ref_text", ref_text)
 
+        # Transcribir si el texto de referencia está vacío
+        if not ref_text_emotion:
+            print(f"Transcribiendo texto de referencia para emoción '{emotion}' con Faster Whisper...")
+            ref_text_emotion = transcribe_audio_with_whisper(ref_audio)
+
+        ref_text_emotion = ref_text_emotion or "Texto predeterminado."
+
+        # Generar audio para este segmento
         audio, _ = infer_process(
             ref_audio,
             ref_text_emotion,
@@ -89,66 +129,50 @@ def infer_multi_emotion(ref_audio_orig, ref_text, gen_text, emotions_audio_map, 
         return sr, final_audio
     return None
 
-# Construcción de la Interfaz Gradio
-with gr.Blocks() as app:
+# Construir la interfaz Gradio
+with gr.Blocks() as app_tts_multihabla:
     gr.Markdown("# F5-TTS en Español - Multi-Habla")
 
-    # Sección Regular
+    # Tipo de habla regular obligatorio
     with gr.Row():
         regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
         regular_ref_text = gr.Textbox(label="Texto de Referencia Regular", lines=2)
 
-    # Gestión de Emociones
-    emotions = gr.State(value={})  # Diccionario de emociones guardadas
-    with gr.Row():
-        emotion_name = gr.Textbox(label="Nombre de la Emoción", placeholder="Ejemplo: Triste")
-        emotion_audio = gr.Audio(label="Audio de Referencia para la Emoción", type="filepath")
-        emotion_ref_text = gr.Textbox(label="Texto de Referencia para la Emoción (opcional)", lines=2)
-        add_emotion_btn = gr.Button("Guardar Emoción")
+    # Emociones adicionales
+    emotions = gr.State(value={})  # Guardar audios y textos asociados a emociones
+    emotion_name = gr.Textbox(label="Nombre de la Emoción (ej: Alegre)", placeholder="Escribe el nombre de la emoción")
+    emotion_audio = gr.Audio(label="Audio de Referencia para la Emoción", type="filepath")
+    emotion_ref_text = gr.Textbox(label="Texto de Referencia para la Emoción", lines=2)
+    add_emotion_btn = gr.Button("Agregar Emoción")
 
     def add_emotion(emotions, emotion_name, emotion_audio, emotion_ref_text):
         if not emotion_name or not emotion_audio:
-            return emotions  # No agregar si faltan datos
+            return gr.update(), gr.update(), emotions  # No hacer nada si faltan datos
         emotions[emotion_name] = {"audio": emotion_audio, "ref_text": emotion_ref_text}
-        return emotions
+        return gr.update(value=""), gr.update(value=None), emotions
 
     add_emotion_btn.click(
         add_emotion,
         inputs=[emotions, emotion_name, emotion_audio, emotion_ref_text],
-        outputs=[emotions],
+        outputs=[emotion_name, emotion_audio, emotions],
     )
 
-    # Listado de Emociones Guardadas
-    emotions_list = gr.Dropdown(label="Seleccionar Emoción", choices=[], interactive=True)
-    update_emotion_btn = gr.Button("Actualizar Lista")
-
-    def update_emotion_list(emotions):
-        return gr.update(choices=list(emotions.keys()))
-
-    update_emotion_btn.click(update_emotion_list, inputs=[emotions], outputs=[emotions_list])
-
-    # Botón para insertar emoción en el texto generador
-    insert_emotion_btn = gr.Button("Insertar Emoción en el Texto")
-
-    def insert_emotion(gen_text, emotion_name):
-        if not emotion_name:
-            return gen_text
-        return f"{gen_text}{{{emotion_name}}} "
-
-    gen_text_input = gr.Textbox(label="Texto para Generar", lines=10, placeholder="Ejemplo: {Alegre} Hola, ¿cómo estás?")
-    insert_emotion_btn.click(insert_emotion, inputs=[gen_text_input, emotions_list], outputs=[gen_text_input])
-
-    # Botón para Generar
+    # Texto y botón para generar
+    gen_text_input = gr.Textbox(
+        label="Texto para Generar",
+        lines=10,
+        placeholder="Ejemplo: {Alegre} Hola, ¿cómo estás? {Triste} Estoy un poco cansado."
+    )
     remove_silence_checkbox = gr.Checkbox(label="Eliminar Silencios", value=False)
-    generate_btn = gr.Button("Generar Audio", variant="primary")
+    generate_btn = gr.Button("Generar Multi-Habla", variant="primary")
     audio_output = gr.Audio(label="Audio Generado")
 
     def generate_audio(regular_audio, regular_ref_text, gen_text, emotions, remove_silence):
         if not regular_audio or not gen_text:
-            return None  # Validación básica
+            return None  # No generar si faltan datos básicos
 
         emotions_audio_map = {"Regular": {"audio": regular_audio, "ref_text": regular_ref_text}}
-        emotions_audio_map.update(emotions)
+        emotions_audio_map.update(emotions)  # Agregar emociones personalizadas
 
         result = infer_multi_emotion(
             regular_audio,
@@ -174,14 +198,27 @@ with gr.Blocks() as app:
 @click.option(
     "--share",
     "-s",
-    default=True,
+    default=False,
     is_flag=True,
-    help="Siempre habilitar el enlace público (Gradio live).",
+    help="Compartir la aplicación a través de un enlace compartido de Gradio",
 )
 @click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
 def main(port, host, share, api):
+    """
+    Ejecuta la aplicación Multi-Habla con las configuraciones de Gradio.
+    """
     print("Iniciando la aplicación...")
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
+
+    global app
+    app = app_tts_multihabla  # Configurar la aplicación principal
+
+    app.queue(api_open=api).launch(
+        server_name=host,
+        server_port=port,
+        share=True,  # Siempre genera un enlace público
+        show_api=api,
+    )
+
 
 if __name__ == "__main__":
     main()
