@@ -176,7 +176,7 @@ with gr.Blocks() as app:
 @click.option("--share", "-s", default=False, is_flag=True, help="Compartir la aplicación públicamente")
 def main(port, share):
     """Lanza la aplicación Gradio."""
-    app.queue().launch(server_port=port, share=share, inbrowser=True)
+    app.queue(api_open=True).launch(server_port=port, share=share, inbrowser=True, live=True)
 
 
 if __name__ == "__main__":
