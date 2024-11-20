@@ -137,7 +137,6 @@ with gr.Blocks() as app_tts_multihabla:
     )
     remove_silence_checkbox = gr.Checkbox(label="Eliminar Silencios", value=False)
     generate_btn = gr.Button("Generar Multi-Habla", variant="primary")
-    download_btn = gr.Button("Guardar Audio Generado")
     audio_output = gr.Audio(label="Audio Generado")
 
     def generate_audio(regular_audio, regular_ref_text, gen_text, emotions, remove_silence):
@@ -156,28 +155,13 @@ with gr.Blocks() as app_tts_multihabla:
         )
         if result:
             sr, audio = result
-            output_path = tempfile.mktemp(suffix=".wav")
-            sf.write(output_path, audio, sr)
-            return sr, audio, output_path
-        return None, None, None
-
-    result_audio = gr.State(value=None)
+            return sr, audio
+        return None
 
     generate_btn.click(
         generate_audio,
         inputs=[regular_audio, regular_ref_text, gen_text_input, emotions, remove_silence_checkbox],
-        outputs=[audio_output, result_audio],
-    )
-
-    def save_audio(result_audio):
-        if result_audio:
-            return gr.File.update(value=result_audio)
-        return None
-
-    download_btn.click(
-        save_audio,
-        inputs=[result_audio],
-        outputs=[gr.File(label="Descargar Archivo")],
+        outputs=[audio_output],
     )
 
 @click.command()
@@ -186,9 +170,9 @@ with gr.Blocks() as app_tts_multihabla:
 @click.option(
     "--share",
     "-s",
-    default=False,
+    default=True,
     is_flag=True,
-    help="Compartir la aplicación a través de un enlace compartido de Gradio",
+    help="Siempre habilitar el enlace live (Gradio public URL).",
 )
 @click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
 def main(port, host, share, api):
@@ -199,7 +183,7 @@ def main(port, host, share, api):
     app_tts_multihabla.queue(api_open=api).launch(
         server_name=host,
         server_port=port,
-        share=True,  # Siempre generar enlace público
+        share=True,  # Siempre habilitar el live
         show_api=api,
     )
 
