@@ -31,10 +31,8 @@ from f5_tts.infer.utils_infer import (
     remove_silence_for_generated_wav,
 )
 
-# Load vocoder
+# Load vocoder and model
 vocoder = load_vocoder()
-
-# Load F5-TTS model
 F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
 F5TTS_ema_model = load_model(
     DiT, F5TTS_model_cfg, str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
@@ -66,6 +64,15 @@ def infer(
     final_wave, final_sample_rate, _ = infer_process(
         ref_audio, ref_text, gen_text, ema_model, vocoder, cross_fade_duration=cross_fade_duration, speed=speed
     )
+
+    # Remove silence if required
+    if remove_silence:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpfile:
+            sf.write(tmpfile.name, final_wave, final_sample_rate)
+            remove_silence_for_generated_wav(tmpfile.name)
+            final_wave, _ = torchaudio.load(tmpfile.name)
+        final_wave = final_wave.squeeze().cpu().numpy()
+
     return final_sample_rate, final_wave
 
 
@@ -85,6 +92,7 @@ def parse_speechtypes_text(gen_text):
 
 with gr.Blocks() as app:
     gr.Markdown("# Generación de Múltiples Tipos de Habla")
+
     with gr.Row():
         regular_name = gr.Textbox(value="Regular", label="Nombre del Tipo de Habla")
         regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
@@ -93,14 +101,20 @@ with gr.Blocks() as app:
     max_speech_types = 10
     speech_type_count = gr.State(value=0)
     speech_type_rows = []
+    speech_type_names = []
+    speech_type_audios = []
+    speech_type_ref_texts = []
 
-    for i in range(max_speech_types):
+    for _ in range(max_speech_types):
         row = gr.Row(visible=False)
         with row:
             name_input = gr.Textbox(label="Nombre del Tipo de Habla")
             audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
             ref_text_input = gr.Textbox(label="Texto de Referencia", lines=2)
         speech_type_rows.append(row)
+        speech_type_names.append(name_input)
+        speech_type_audios.append(audio_input)
+        speech_type_ref_texts.append(ref_text_input)
 
     add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
@@ -108,6 +122,7 @@ with gr.Blocks() as app:
     audio_output = gr.Audio(label="Audio Sintetizado")
 
     def toggle_speech_type_row(count):
+        """Muestra u oculta filas adicionales de tipos de habla."""
         if count < max_speech_types:
             updates = [gr.update(visible=True) if i == count else gr.update() for i in range(max_speech_types)]
             return count + 1, *updates
@@ -143,22 +158,25 @@ with gr.Blocks() as app:
 
         if audio_segments:
             return sr, np.concatenate(audio_segments)
-        return None
+        else:
+            return None
 
     generate_btn.click(
         generate_multistyle_audio,
         inputs=[regular_audio, regular_ref_text, gen_text_input]
-        + [row.children[0] for row in speech_type_rows]
-        + [row.children[1] for row in speech_type_rows]
-        + [row.children[2] for row in speech_type_rows],
+        + speech_type_names
+        + speech_type_audios
+        + speech_type_ref_texts,
         outputs=audio_output,
     )
 
 
 @click.command()
 @click.option("--port", "-p", default=7860, type=int, help="Puerto para ejecutar la aplicación")
-def main(port):
-    app.queue().launch(server_port=port, share=True, inbrowser=True)
+@click.option("--share", "-s", default=False, is_flag=True, help="Compartir la aplicación públicamente")
+def main(port, share):
+    """Lanza la aplicación Gradio."""
+    app.queue().launch(server_port=port, share=share, inbrowser=True)
 
 
 if __name__ == "__main__":
