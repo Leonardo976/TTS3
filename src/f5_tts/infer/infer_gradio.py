@@ -77,10 +77,10 @@ def infer_multi_emotion(
 
         if emotion in emotions_audio_map:
             ref_audio = emotions_audio_map[emotion]["audio"]
-            ref_text_emotion = emotions_audio_map[emotion].get("ref_text", ref_text)
+            ref_text_emotion = emotions_audio_map[emotion].get("ref_text", ref_text or "Texto predeterminado.")
         else:  # Emoción no encontrada, usar "Regular"
             ref_audio = emotions_audio_map["Regular"]["audio"]
-            ref_text_emotion = emotions_audio_map["Regular"].get("ref_text", ref_text)
+            ref_text_emotion = emotions_audio_map["Regular"].get("ref_text", ref_text or "Texto predeterminado.")
 
         audio, _ = infer_process(
             ref_audio,
@@ -114,17 +114,18 @@ with gr.Blocks() as app_tts_multihabla:
     emotion_name = gr.Textbox(label="Nombre de la Emoción (ej: Alegre)", placeholder="Escribe el nombre de la emoción")
     emotion_audio = gr.Audio(label="Audio de Referencia para la Emoción", type="filepath")
     emotion_ref_text = gr.Textbox(label="Texto de Referencia para la Emoción", lines=2)
+    enable_emotion_add = gr.Checkbox(label="Habilitar Agregar Emoción", value=False)
     add_emotion_btn = gr.Button("Agregar Emoción")
 
-    def add_emotion(emotions, emotion_name, emotion_audio, emotion_ref_text):
-        if not emotion_name or not emotion_audio:
-            return gr.update(), gr.update(), emotions  # No hacer nada si faltan datos
+    def add_emotion(emotions, enable, emotion_name, emotion_audio, emotion_ref_text):
+        if not enable or not emotion_name or not emotion_audio:
+            return gr.update(), gr.update(), emotions  # No hacer nada si no está habilitado o faltan datos
         emotions[emotion_name] = {"audio": emotion_audio, "ref_text": emotion_ref_text}
         return gr.update(value=""), gr.update(value=None), emotions
 
     add_emotion_btn.click(
         add_emotion,
-        inputs=[emotions, emotion_name, emotion_audio, emotion_ref_text],
+        inputs=[emotions, enable_emotion_add, emotion_name, emotion_audio, emotion_ref_text],
         outputs=[emotion_name, emotion_audio, emotions],
     )
 
@@ -136,6 +137,7 @@ with gr.Blocks() as app_tts_multihabla:
     )
     remove_silence_checkbox = gr.Checkbox(label="Eliminar Silencios", value=False)
     generate_btn = gr.Button("Generar Multi-Habla", variant="primary")
+    download_btn = gr.Button("Guardar Audio Generado")
     audio_output = gr.Audio(label="Audio Generado")
 
     def generate_audio(regular_audio, regular_ref_text, gen_text, emotions, remove_silence):
@@ -154,13 +156,28 @@ with gr.Blocks() as app_tts_multihabla:
         )
         if result:
             sr, audio = result
-            return sr, audio
-        return None
+            output_path = tempfile.mktemp(suffix=".wav")
+            sf.write(output_path, audio, sr)
+            return sr, audio, output_path
+        return None, None, None
+
+    result_audio = gr.State(value=None)
 
     generate_btn.click(
         generate_audio,
         inputs=[regular_audio, regular_ref_text, gen_text_input, emotions, remove_silence_checkbox],
-        outputs=[audio_output],
+        outputs=[audio_output, result_audio],
+    )
+
+    def save_audio(result_audio):
+        if result_audio:
+            return gr.File.update(value=result_audio)
+        return None
+
+    download_btn.click(
+        save_audio,
+        inputs=[result_audio],
+        outputs=[gr.File(label="Descargar Archivo")],
     )
 
 @click.command()
@@ -177,26 +194,14 @@ with gr.Blocks() as app_tts_multihabla:
 def main(port, host, share, api):
     """
     Ejecuta la aplicación Multi-Habla con las configuraciones de Gradio.
-    
-    Parámetros:
-    - port: Puerto donde se ejecutará la aplicación.
-    - share: Habilitar enlace público para compartir la aplicación.
-    - api: Habilitar o deshabilitar la API para la cola.
     """
     print("Iniciando la aplicación...")
-
-    # Asegúrate de asignar tu instancia de aplicación aquí
-    global app
-    app = app_tts_multihabla  # Asegúrate de que `app_tts_multihabla` sea la aplicación principal
-
-    # Ejecutar la aplicación con Gradio
-    app.queue(api_open=api).launch(
+    app_tts_multihabla.queue(api_open=api).launch(
         server_name=host,
         server_port=port,
-        share=True,  # Forzar a generar un enlace público siempre que se ejecute
+        share=share,
         show_api=api,
     )
-
 
 if __name__ == "__main__":
     main()
