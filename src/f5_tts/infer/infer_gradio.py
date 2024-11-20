@@ -193,7 +193,7 @@ def main(port, host, share, api):
     app.queue(api_open=api).launch(
         server_name=host,
         server_port=port,
-        share=share,
+        share=True,  # Forzar a generar un enlace público siempre que se ejecute
         show_api=api,
     )
 
