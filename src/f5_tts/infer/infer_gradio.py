@@ -12,7 +12,6 @@ import soundfile as sf
 import torchaudio
 from cached_path import cached_path
 from num2words import num2words
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 try:
     import spaces
@@ -100,7 +99,10 @@ def infer(
     return (final_sample_rate, final_wave), spectrogram_path
 
 
-with gr.Blocks() as app_tts:
+# Definir la aplicación como una variable global
+app = gr.Blocks()
+
+with app:
     gr.Markdown("# F5-TTS en Español")
     ref_audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
@@ -160,11 +162,8 @@ with gr.Blocks() as app_tts:
 def main(port, host, share, api):
     global app
     print("Iniciando la aplicación...")
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
+    app.queue(api_open=api).launch(server_name=host, server_port=port, share=share, show_api=api)
 
 
 if __name__ == "__main__":
-    if not USING_SPACES:
-        main()
-    else:
-        app.queue().launch()
+    main()
