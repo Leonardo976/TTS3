@@ -163,10 +163,9 @@ with gr.Blocks() as app_tts_multihabla:
         outputs=[audio_output],
     )
 
-# Comando principal para lanzar Gradio
 @click.command()
 @click.option("--port", "-p", default=None, type=int, help="Puerto para ejecutar la aplicación")
-@click.option("--host", "-H", default="0.0.0.0", help="Host para ejecutar la aplicación")
+@click.option("--host", "-H", default=None, help="Host para ejecutar la aplicación")
 @click.option(
     "--share",
     "-s",
@@ -174,8 +173,12 @@ with gr.Blocks() as app_tts_multihabla:
     is_flag=True,
     help="Compartir la aplicación a través de un enlace compartido de Gradio",
 )
-def main(port, host, share):
-    app_tts_multihabla.queue().launch(server_name=host, server_port=port, share=share)
+@click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
+def main(port, host, share, api):
+    global app
+    print("Iniciando la aplicación...")
+    # Asegúrate de que `share=True`
+    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
 
 
 if __name__ == "__main__":
