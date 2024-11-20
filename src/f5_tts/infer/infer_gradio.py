@@ -3,18 +3,16 @@
 
 import re
 import tempfile
-
 import click
 import gradio as gr
 import numpy as np
 import soundfile as sf
 import torchaudio
 from cached_path import cached_path
-from transformers import num2words
+from num2words import num2words  # Asegúrate de instalar con `pip install num2words`
 
 try:
     import spaces
-
     USING_SPACES = True
 except ImportError:
     USING_SPACES = False
@@ -43,7 +41,9 @@ F5TTS_ema_model = load_model(
     DiT, F5TTS_model_cfg, str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
 )
 
+
 def traducir_numero_a_texto(texto):
+    """Convierte números en palabras dentro del texto."""
     def reemplazar_numero(match):
         numero = match.group()
         return num2words(int(numero), lang='es')
@@ -54,6 +54,7 @@ def traducir_numero_a_texto(texto):
 def infer(
     ref_audio_orig, ref_text, gen_text, model, remove_silence, cross_fade_duration=0.15, speed=1, show_info=gr.Info
 ):
+    """Realiza la inferencia de texto a audio."""
     ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
     ema_model = F5TTS_ema_model
 
@@ -70,6 +71,7 @@ def infer(
 
 
 def parse_speechtypes_text(gen_text):
+    """Analiza el texto y separa los estilos de habla."""
     tokens = re.split(r"\{(.*?)\}", gen_text)
     segments = []
     current_style = "Regular"
@@ -94,7 +96,7 @@ with gr.Blocks() as app_multistyle:
     speech_type_count = gr.State(value=0)
     speech_type_rows = []
 
-    for _ in range(max_speech_types):
+    for i in range(max_speech_types):
         row = gr.Row(visible=False)
         with row:
             name_input = gr.Textbox(label="Nombre del Tipo de Habla")
@@ -119,6 +121,7 @@ with gr.Blocks() as app_multistyle:
     def generate_multistyle_audio(
         regular_audio, regular_ref_text, gen_text, *args
     ):
+        """Genera el audio concatenando segmentos de diferentes estilos."""
         speech_type_names = args[:max_speech_types]
         speech_type_audios = args[max_speech_types : 2 * max_speech_types]
         speech_type_ref_texts = args[2 * max_speech_types :]
@@ -155,9 +158,13 @@ with gr.Blocks() as app_multistyle:
 
 
 @click.command()
-@click.option("--port", default=7860, type=int, help="Puerto para ejecutar la aplicación")
-def main(port):
-    app_multistyle.queue().launch(server_port=port, share=True, inbrowser=True)
+@click.option("--port", "-p", default=7860, type=int, help="Puerto para ejecutar la aplicación")
+@click.option("--host", "-H", default=None, help="Host para ejecutar la aplicación")
+@click.option("--share", "-s", default=False, is_flag=True, help="Compartir la aplicación")
+@click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
+def main(port, host, share, api):
+    print("Iniciando la aplicación...")
+    app_multistyle.queue(api_open=api).launch(server_name=host, server_port=port, share=True, inbrowser=True, show_api=api)
 
 
 if __name__ == "__main__":
