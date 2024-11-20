@@ -95,7 +95,7 @@ with gr.Blocks() as app:
 
     with gr.Row():
         regular_name = gr.Textbox(value="Regular", label="Nombre del Tipo de Habla")
-        regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
+        regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath", live=True)
         regular_ref_text = gr.Textbox(label="Texto de Referencia (Regular)", lines=2)
 
     max_speech_types = 10
@@ -109,7 +109,7 @@ with gr.Blocks() as app:
         row = gr.Row(visible=False)
         with row:
             name_input = gr.Textbox(label="Nombre del Tipo de Habla")
-            audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
+            audio_input = gr.Audio(label="Audio de Referencia", type="filepath", live=True)
             ref_text_input = gr.Textbox(label="Texto de Referencia", lines=2)
         speech_type_rows.append(row)
         speech_type_names.append(name_input)
@@ -119,7 +119,7 @@ with gr.Blocks() as app:
     add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
     generate_btn = gr.Button("Generar Habla Multi-Estilo", variant="primary")
-    audio_output = gr.Audio(label="Audio Sintetizado")
+    audio_output = gr.Audio(label="Audio Sintetizado", live=True)
 
     def toggle_speech_type_row(count):
         """Muestra u oculta filas adicionales de tipos de habla."""
@@ -176,7 +176,7 @@ with gr.Blocks() as app:
 @click.option("--share", "-s", default=False, is_flag=True, help="Compartir la aplicación públicamente")
 def main(port, share):
     """Lanza la aplicación Gradio."""
-    app.queue(api_open=True).launch(server_port=port, share=share, inbrowser=True, live=True)
+    app.queue(api_open=True).launch(server_port=port, share=share, inbrowser=True)
 
 
 if __name__ == "__main__":
