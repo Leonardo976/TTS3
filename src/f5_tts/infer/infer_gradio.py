@@ -1,152 +1,255 @@
-import gradio as gr
-import torch
-import torchaudio
-import click
+import re
 import tempfile
+import click
+import gradio as gr
+import numpy as np
 import soundfile as sf
+import torchaudio
 from cached_path import cached_path
-from f5_tts.model import DiT, UNetT
+from num2words import num2words
+from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
     load_model,
     preprocess_ref_audio_text,
     infer_process,
     remove_silence_for_generated_wav,
-    save_spectrogram,
 )
 
-# Configuración del dispositivo y vocoder
-device = "cuda" if torch.cuda.is_available() else "cpu"
 vocoder = load_vocoder()
 
-# Configuración del modelo F5-TTS
-model_ckpt_path = str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
+# load models
 F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-F5TTS_model = load_model(
-    DiT,
-    F5TTS_model_cfg,
-    model_ckpt_path,
-    device=device,
+F5TTS_ema_model = load_model(
+    DiT, F5TTS_model_cfg, str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
 )
 
-# Función para inferencia
-def infer(
-    ref_audio_path,
-    ref_text,
-    gen_text,
-    remove_silence,
-    cross_fade_duration=0.15,
-    speed=1.0,
-):
-    """
-    Realiza la síntesis de voz a partir del audio y texto de referencia.
-    """
-    # Preprocesar audio y texto de referencia
-    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_path, ref_text)
+def traducir_numero_a_texto(texto):
+    texto_separado = re.sub(r'([A-Za-z])(\d)', r'\1 \2', texto)
+    texto_separado = re.sub(r'(\d)([A-Za-z])', r'\1 \2', texto_separado)
+    
+    def reemplazar_numero(match):
+        numero = match.group()
+        return num2words(int(numero), lang='es')
 
-    # Proceso de inferencia
-    final_wave, final_sample_rate, spectrogram = infer_process(
-        ref_audio,
-        ref_text,
-        gen_text,
-        F5TTS_model,
-        vocoder,
-        cross_fade_duration=cross_fade_duration,
-        speed=speed,
-        device=device,
+    texto_traducido = re.sub(r'\b\d+\b', reemplazar_numero, texto_separado)
+    return texto_traducido
+
+def parse_text_marks(text):
+    segments = []
+    pattern = r'\{([^}]+)\}'
+    
+    # Split text by marks
+    parts = re.split(pattern, text)
+    
+    current_marks = {
+        'speed': 1.0,
+        'pitch': 1.0,
+        'style': 'Regular'
+    }
+    
+    for i, part in enumerate(parts):
+        if i % 2 == 0:  # Text content
+            if part.strip():
+                segments.append({
+                    'text': part.strip(),
+                    'marks': current_marks.copy()
+                })
+        else:  # Mark definition
+            marks = part.lower().split()
+            for mark in marks:
+                if mark == 'fast':
+                    current_marks['speed'] = 1.5
+                elif mark == 'slow':
+                    current_marks['speed'] = 0.7
+                elif mark == 'high':
+                    current_marks['pitch'] = 1.2
+                elif mark == 'low':
+                    current_marks['pitch'] = 0.8
+                elif mark in ['regular', 'sorprendido', 'triste', 'enojado', 'susurro', 'gritando']:
+                    current_marks['style'] = mark.capitalize()
+                else:
+                    current_marks['style'] = mark
+    
+    return segments
+
+def infer_with_marks(ref_audio, ref_text, text, model, remove_silence=False, show_info=print):
+    segments = parse_text_marks(text)
+    audio_segments = []
+    
+    for segment in segments:
+        text_segment = segment['text']
+        speed = segment['marks']['speed']
+        # Note: pitch modification would need to be implemented in the audio processing pipeline
+        
+        audio, _ = infer(
+            ref_audio,
+            ref_text,
+            text_segment,
+            model,
+            remove_silence,
+            cross_fade_duration=0.15,
+            speed=speed,
+            show_info=show_info
+        )
+        sr, audio_data = audio
+        audio_segments.append(audio_data)
+    
+    if audio_segments:
+        final_audio = np.concatenate(audio_segments)
+        return (sr, final_audio)
+    return None
+
+with gr.Blocks() as app:
+    gr.Markdown("""
+    # Spanish F5 TTS - Multi-Habla con Marcas de Texto
+    
+    Esta interfaz permite generar voz con múltiples estilos y marcas de texto.
+    
+    **Marcas disponibles:**
+    - Velocidad: {fast}, {slow}
+    - Tono: {high}, {low}
+    - Estilos: {Regular}, {Sorprendido}, {Triste}, {Enojado}, {Susurro}, {Gritando}
+    
+    **Ejemplo:**
+    {Regular} Hola, esto es una prueba. {fast} Esta parte es más rápida. {slow} Y esta más lenta.
+    {Sorprendido high} ¡Wow, esto es increíble! {Susurro low} Y esto es un secreto...
+    """)
+
+    # Regular speech type (mandatory)
+    with gr.Row():
+        with gr.Column():
+            regular_name = gr.Textbox(value="Regular", label="Nombre del Tipo de Habla")
+            regular_insert = gr.Button("Insertar", variant="secondary")
+        regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
+        regular_ref_text = gr.Textbox(label="Texto de Referencia (Regular)", lines=2)
+
+    # Additional speech types
+    max_speech_types = 6  # Reduced number of speech types
+    speech_type_rows = []
+    speech_type_names = [regular_name]
+    speech_type_audios = []
+    speech_type_ref_texts = []
+    speech_type_delete_btns = []
+    speech_type_insert_btns = []
+    speech_type_insert_btns.append(regular_insert)
+
+    for i in range(max_speech_types - 1):
+        with gr.Row(visible=False) as row:
+            with gr.Column():
+                name_input = gr.Textbox(label="Nombre del Tipo de Habla")
+                delete_btn = gr.Button("Eliminar", variant="secondary")
+                insert_btn = gr.Button("Insertar", variant="secondary")
+            audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
+            ref_text_input = gr.Textbox(label="Texto de Referencia", lines=2)
+        speech_type_rows.append(row)
+        speech_type_names.append(name_input)
+        speech_type_audios.append(audio_input)
+        speech_type_ref_texts.append(ref_text_input)
+        speech_type_delete_btns.append(delete_btn)
+        speech_type_insert_btns.append(insert_btn)
+
+    add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
+    speech_type_count = gr.State(value=0)
+
+    def add_speech_type_fn(speech_type_count):
+        if speech_type_count < max_speech_types - 1:
+            speech_type_count += 1
+            row_updates = []
+            for i in range(max_speech_types - 1):
+                if i < speech_type_count:
+                    row_updates.append(gr.update(visible=True))
+                else:
+                    row_updates.append(gr.update())
+        else:
+            row_updates = [gr.update() for _ in range(max_speech_types - 1)]
+        return [speech_type_count] + row_updates
+
+    add_speech_type_btn.click(
+        add_speech_type_fn,
+        inputs=speech_type_count,
+        outputs=[speech_type_count] + speech_type_rows
     )
 
-    # Eliminar silencios si es necesario
-    if remove_silence:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-            sf.write(f.name, final_wave, final_sample_rate)
-            remove_silence_for_generated_wav(f.name)
-            final_wave, _ = torchaudio.load(f.name)
-        final_wave = final_wave.squeeze().cpu().numpy()
+    gen_text_input = gr.Textbox(
+        label="Texto para Generar",
+        lines=10,
+        placeholder="Ingresa el texto con marcas de estilo y velocidad. Ejemplo:\n{Regular} Hola, esto es {fast} una prueba rápida {slow} y esto va más lento."
+    )
 
-    # Guardar espectrograma
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
-        spectrogram_path = tmp_spectrogram.name
-        save_spectrogram(spectrogram, spectrogram_path)
-
-    return (final_sample_rate, final_wave), spectrogram_path
-
-
-# Crear interfaz de Gradio
-def create_gradio_app():
-    """
-    Configura la interfaz de usuario para la aplicación de Gradio.
-    """
-    with gr.Blocks() as app:
-        gr.Markdown("# F5-TTS Synthesizer")
-        with gr.Row():
-            ref_audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
-            gen_text_input = gr.Textbox(label="Texto para Generar", lines=5)
-        with gr.Accordion("Configuraciones Avanzadas", open=False):
-            ref_text_input = gr.Textbox(
-                label="Texto de Referencia",
-                info="Opcional: Si no se proporciona, será transcrito automáticamente.",
-                lines=2,
-            )
-            remove_silence_checkbox = gr.Checkbox(
-                label="Eliminar Silencios",
-                info="Elimina silencios largos del audio generado.",
-                value=False,
-            )
-            speed_slider = gr.Slider(
-                label="Velocidad",
-                minimum=0.3,
-                maximum=2.0,
-                value=1.0,
-                step=0.1,
-                info="Ajusta la velocidad del audio generado.",
-            )
-            cross_fade_slider = gr.Slider(
-                label="Duración del Cross-Fade (s)",
-                minimum=0.0,
-                maximum=1.0,
-                value=0.15,
-                step=0.01,
-                info="Duración del cross-fade entre clips de audio generados.",
-            )
-        generate_button = gr.Button("Generar", variant="primary")
-        audio_output = gr.Audio(label="Audio Generado")
-        spectrogram_output = gr.Image(label="Espectrograma")
-
-        # Conectar inferencia con los inputs y outputs
-        generate_button.click(
-            infer,
-            inputs=[
-                ref_audio_input,
-                ref_text_input,
-                gen_text_input,
-                remove_silence_checkbox,
-                cross_fade_slider,
-                speed_slider,
-            ],
-            outputs=[audio_output, spectrogram_output],
+    with gr.Accordion("Configuraciones Avanzadas", open=False):
+        remove_silence = gr.Checkbox(
+            label="Eliminar Silencios",
+            value=False,
         )
-    return app
 
+    generate_btn = gr.Button("Generar Audio", variant="primary")
+    audio_output = gr.Audio(label="Audio Generado")
 
-# Función principal para ejecutar la aplicación
-@click.command()
-@click.option("--port", "-p", default=7860, type=int, help="Puerto para ejecutar la aplicación")
-@click.option("--host", "-h", default="0.0.0.0", help="Host para ejecutar la aplicación")
-@click.option(
-    "--share",
-    "-s",
-    is_flag=True,
-    help="Compartir la aplicación a través de un enlace público con Gradio",
-)
-def main(port, host, share):
-    """
-    Lanza la aplicación Gradio.
-    """
-    app = create_gradio_app()
-    app.queue().launch(server_name=host, server_port=port, share=share)
+    def generate_speech(
+        regular_audio,
+        regular_ref_text,
+        gen_text,
+        remove_silence,
+        *args
+    ):
+        if not regular_audio or not gen_text.strip():
+            return None
 
+        speech_types = {"Regular": {"audio": regular_audio, "ref_text": regular_ref_text}}
+        
+        # Process additional speech types
+        num_additional = max_speech_types - 1
+        names = args[:num_additional]
+        audios = args[num_additional:2*num_additional]
+        ref_texts = args[2*num_additional:3*num_additional]
+        
+        for name, audio, ref_text in zip(names, audios, ref_texts):
+            if name and audio:
+                speech_types[name] = {"audio": audio, "ref_text": ref_text}
 
-# Punto de entrada
+        segments = parse_text_marks(gen_text)
+        audio_segments = []
+        
+        for segment in segments:
+            style = segment['marks']['style']
+            if style not in speech_types:
+                style = "Regular"
+                
+            ref_audio = speech_types[style]["audio"]
+            ref_text = speech_types[style].get("ref_text", "")
+            
+            text = segment['text']
+            speed = segment['marks']['speed']
+            
+            audio = infer(
+                ref_audio,
+                ref_text,
+                text,
+                "F5-TTS",
+                remove_silence,
+                cross_fade_duration=0.15,
+                speed=speed,
+                show_info=print
+            )
+            sr, audio_data = audio[0]
+            audio_segments.append(audio_data)
+
+        if audio_segments:
+            final_audio = np.concatenate(audio_segments)
+            return (sr, final_audio)
+        return None
+
+    generate_btn.click(
+        generate_speech,
+        inputs=[
+            regular_audio,
+            regular_ref_text,
+            gen_text_input,
+            remove_silence,
+        ] + speech_type_names + speech_type_audios + speech_type_ref_texts,
+        outputs=audio_output,
+    )
+
 if __name__ == "__main__":
-    main()
+    app.launch()
