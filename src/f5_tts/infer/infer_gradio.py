@@ -28,7 +28,6 @@ from f5_tts.infer.utils_infer import (
     infer_process,
     remove_silence_for_generated_wav,
 )
-
 vocoder = load_vocoder()
 
 # load models
@@ -344,8 +343,23 @@ Esta interfaz permite generar múltiples tipos de habla o las voces de múltiple
         outputs=generate_multistyle_btn,
     )
 
+def main():
+    vocoder = load_vocoder()
+
+    # load models
+    F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
+    F5TTS_ema_model = load_model(
+        DiT, F5TTS_model_cfg, str(cached_path("hf://jpgallegoar/F5-Spanish/model_1200000.safetensors"))
+    )
+
+    # Rest of your code remains the same until the app launch...
+    
+    if __name__ == "__main__":
+        if not USING_SPACES:
+            app.queue(api_open=True).launch(server_port=None, share=True, show_api=True)
+        else:
+            app.queue().launch()
+
+# Add this at the very end of the file
 if __name__ == "__main__":
-    if not USING_SPACES:
-        app.queue(api_open=True).launch(server_port=None, share=True, show_api=True)
-    else:
-        app.queue().launch()
+    main()
