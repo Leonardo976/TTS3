@@ -49,10 +49,10 @@ def traducir_numero_a_texto(texto):
 
 @gpu_decorator
 def infer(
-    ref_audio_orig, ref_text, gen_text, model, remove_silence, cross_fade_duration=0.15, speed=1, show_info=gr.Info
+    ref_audio_orig, ref_text, gen_text, model, remove_silence, cross_fade_duration=0.15, speed=1
 ):
     """Realiza la inferencia de texto a audio."""
-    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
+    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text)
     ema_model = F5TTS_ema_model
 
     if not gen_text.startswith(" "):
@@ -159,7 +159,7 @@ with gr.Blocks() as app:
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
     generate_btn = gr.Button("Generar Habla Multi-Estilo", variant="primary")
     audio_output = gr.Audio(label="Audio Sintetizado")
-    progress_bar = gr.Textbox(label="Progreso", interactive=False)
+    progress_bar = gr.Textbox(label="Progreso", interactive=True, lines=5)
 
     # General button to add new speech types
     add_speech_type_btn = gr.Button("Agregar Nuevo Tipo de Habla")
@@ -209,10 +209,9 @@ with gr.Blocks() as app:
 
     @gpu_decorator
     def generate_multistyle_audio(
-        regular_audio, regular_ref_text, gen_text, progress, *args
+        regular_audio, regular_ref_text, gen_text, *args
     ):
         """Genera el audio concatenando segmentos de diferentes estilos."""
-        progress.append("Inicio de la generación...")
         speech_type_names = args[:max_speech_types]
         speech_type_audios = args[max_speech_types : 2 * max_speech_types]
         speech_type_ref_texts = args[2 * max_speech_types :]
@@ -225,17 +224,15 @@ with gr.Blocks() as app:
         segments = parse_speechtypes_text(gen_text)
         audio_segments = []
 
-        for i, segment in enumerate(segments):
+        for segment in segments:
             style = segment["style"]
             text = segment["text"]
-            progress.append(f"Procesando segmento {i + 1}/{len(segments)}: {style}")
             if style in speech_types:
                 sr, audio = infer(
                     speech_types[style]["audio"], speech_types[style]["ref_text"], text, F5TTS_ema_model, False
                 )
                 audio_segments.append(audio)
 
-        progress.append("Finalizando la generación...")
         if audio_segments:
             return sr, np.concatenate(audio_segments)
         else:
@@ -243,11 +240,11 @@ with gr.Blocks() as app:
 
     generate_btn.click(
         generate_multistyle_audio,
-        inputs=[regular_audio, regular_ref_text, gen_text_input, progress_bar]
+        inputs=[regular_audio, regular_ref_text, gen_text_input]
         + speech_type_names
         + speech_type_audios
         + speech_type_ref_texts,
-        outputs=[audio_output, progress_bar],
+        outputs=audio_output,
     )
 
 
