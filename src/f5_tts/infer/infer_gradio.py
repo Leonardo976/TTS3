@@ -98,8 +98,8 @@ def save_speech_type(name, audio_path, text):
     """Guarda un tipo de habla en la lista global."""
     if name and name not in [s["name"] for s in saved_speech_types]:
         saved_speech_types.append({"name": name, "audio": audio_path, "text": text})
-        return f"Guardado: {name}"
-    return "El nombre ya existe o no es válido."
+        return f"Guardado: {name}", [s["name"] for s in saved_speech_types]
+    return "El nombre ya existe o no es válido.", [s["name"] for s in saved_speech_types]
 
 
 def delete_speech_type(name):
@@ -107,13 +107,8 @@ def delete_speech_type(name):
     global saved_speech_types
     if name != "Regular":  # Proteger el tipo "Regular"
         saved_speech_types = [s for s in saved_speech_types if s["name"] != name]
-        return f"Eliminado: {name}"
-    return "No se puede eliminar el tipo Regular."
-
-
-def update_saved_speech_types():
-    """Actualiza la lista de tipos guardados en el menú desplegable."""
-    return [s["name"] for s in saved_speech_types]
+        return f"Eliminado: {name}", [s["name"] for s in saved_speech_types]
+    return "No se puede eliminar el tipo Regular.", [s["name"] for s in saved_speech_types]
 
 
 def generate_text_with_type(name):
@@ -130,7 +125,6 @@ with gr.Blocks() as app:
         regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
         regular_ref_text = gr.Textbox(label="Texto de Referencia (Regular)", lines=2)
         regular_save_btn = gr.Button("Guardar")
-        regular_delete_btn = gr.Button("Eliminar", interactive=False)  # Regular no se puede eliminar
 
     max_speech_types = 10
     speech_type_rows = []
@@ -158,7 +152,7 @@ with gr.Blocks() as app:
 
     saved_speech_types_dropdown = gr.Dropdown(
         label="Seleccionar Tipo Guardado",
-        choices=update_saved_speech_types(),
+        choices=[s["name"] for s in saved_speech_types],
         interactive=True,
     )
     add_text_with_speech_type_btn = gr.Button("Agregar Texto con Tipo de Habla")
