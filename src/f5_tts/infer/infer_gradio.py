@@ -175,10 +175,27 @@ with gr.Blocks() as app_tts_multihabla:
 )
 @click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
 def main(port, host, share, api):
-    global app
+    """
+    Ejecuta la aplicación Multi-Habla con las configuraciones de Gradio.
+    
+    Parámetros:
+    - port: Puerto donde se ejecutará la aplicación.
+    - share: Habilitar enlace público para compartir la aplicación.
+    - api: Habilitar o deshabilitar la API para la cola.
+    """
     print("Iniciando la aplicación...")
-    # Asegúrate de que `share=True`
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
+
+    # Asegúrate de asignar tu instancia de aplicación aquí
+    global app
+    app = app_tts_multihabla  # Asegúrate de que `app_tts_multihabla` sea la aplicación principal
+
+    # Ejecutar la aplicación con Gradio
+    app.queue(api_open=api).launch(
+        server_name=host,
+        server_port=port,
+        share=share,
+        show_api=api,
+    )
 
 
 if __name__ == "__main__":
