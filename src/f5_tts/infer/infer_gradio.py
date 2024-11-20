@@ -161,10 +161,28 @@ with gr.Blocks() as app:
     audio_output = gr.Audio(label="Audio Sintetizado")
     progress_bar = gr.Textbox(label="Progreso", interactive=False)
 
+    # General button to add new speech types
+    add_speech_type_btn = gr.Button("Agregar Nuevo Tipo de Habla")
+
     def toggle_speech_type_row(index):
         """Muestra u oculta filas adicionales de tipos de habla."""
         return gr.update(visible=True)
 
+    # Logic for adding new speech types
+    speech_type_count = gr.State(value=0)
+
+    def add_speech_type_fn(count):
+        if count < max_speech_types:
+            return count + 1, *[gr.update(visible=i < count + 1) for i in range(max_speech_types)]
+        return count, *[gr.update() for _ in range(max_speech_types)]
+
+    add_speech_type_btn.click(
+        add_speech_type_fn,
+        inputs=speech_type_count,
+        outputs=[speech_type_count] + speech_type_rows,
+    )
+
+    # Save and delete logic for each speech type
     for i, (save_btn, delete_btn) in enumerate(zip(speech_type_save_btns, speech_type_delete_btns)):
         save_btn.click(
             save_speech_type,
