@@ -199,7 +199,7 @@ def main(port, host, share, api):
     app_tts_multihabla.queue(api_open=api).launch(
         server_name=host,
         server_port=port,
-        share=share,
+        share=True,  # Siempre generar enlace público
         show_api=api,
     )
 
