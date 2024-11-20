@@ -172,12 +172,27 @@ with gr.Blocks() as app:
 
 
 @click.command()
-@click.option("--port", "-p", default=7860, type=int, help="Puerto para ejecutar la aplicación")
-@click.option("--share", "-s", default=False, is_flag=True, help="Compartir la aplicación públicamente")
-def main(port, share):
-    """Lanza la aplicación Gradio."""
-    app.queue(api_open=True).launch(server_port=port, share=share, inbrowser=True)
-
+@click.option("--port", "-p", default=None, type=int, help="Puerto para ejecutar la aplicación")
+@click.option("--host", "-H", default=None, help="Host para ejecutar la aplicación")
+@click.option(
+    "--share",
+    "-s",
+    default=True,
+    is_flag=True,
+    help="Siempre habilitar el enlace live (Gradio public URL).",
+)
+@click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
+def main(port, host, share, api):
+    """
+    Ejecuta la aplicación Multi-Habla con las configuraciones de Gradio.
+    """
+    print("Iniciando la aplicación...")
+    app_tts_multihabla.queue(api_open=api).launch(
+        server_name=host,
+        server_port=port,
+        share=True,  # Siempre habilitar el live
+        show_api=api,
+    )
 
 if __name__ == "__main__":
     main()
