@@ -167,4 +167,4 @@ if __name__ == "__main__":
     if not USING_SPACES:
         main()
     else:
-        app_tts.queue().launch()
+        app.queue().launch()
