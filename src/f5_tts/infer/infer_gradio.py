@@ -90,13 +90,22 @@ def parse_speechtypes_text(gen_text):
     return segments
 
 
-saved_speech_types = []
+saved_speech_types = [{"name": "Regular", "audio": None, "text": None}]  # Regular incluido por defecto
 
 
 def save_speech_type(name, audio_path, text):
     """Guarda un tipo de habla en la lista global."""
-    saved_speech_types.append({"name": name, "audio": audio_path, "text": text})
-    return f"Guardado: {name}"
+    if name and name not in [s["name"] for s in saved_speech_types]:
+        saved_speech_types.append({"name": name, "audio": audio_path, "text": text})
+        return f"Guardado: {name}"
+    return "El nombre ya existe o no es válido."
+
+
+def delete_speech_type(name):
+    """Elimina un tipo de habla de la lista global."""
+    global saved_speech_types
+    saved_speech_types = [s for s in saved_speech_types if s["name"] != name]
+    return f"Eliminado: {name}"
 
 
 def generate_text_with_type(name):
@@ -132,6 +141,7 @@ with gr.Blocks() as app:
 
     add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
     save_speech_type_btn = gr.Button("Guardar Tipo de Habla")
+    delete_speech_type_btn = gr.Button("Eliminar Tipo de Habla")
     saved_speech_types_dropdown = gr.Dropdown(label="Seleccionar Tipo Guardado", choices=[], interactive=True)
     add_text_with_speech_type_btn = gr.Button("Agregar Texto con Tipo de Habla")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
@@ -155,6 +165,13 @@ with gr.Blocks() as app:
     save_speech_type_btn.click(
         save_speech_type,
         inputs=[regular_name, regular_audio, regular_ref_text],
+        outputs=progress_bar,
+        postprocess=update_saved_speech_types,
+    )
+
+    delete_speech_type_btn.click(
+        delete_speech_type,
+        inputs=saved_speech_types_dropdown,
         outputs=progress_bar,
         postprocess=update_saved_speech_types,
     )
