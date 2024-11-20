@@ -105,13 +105,15 @@ def save_speech_type(name, audio_path, text):
 def delete_speech_type(name):
     """Elimina un tipo de habla de la lista global."""
     global saved_speech_types
-    saved_speech_types = [s for s in saved_speech_types if s["name"] != name]
-    return f"Eliminado: {name}"
+    if name != "Regular":  # Proteger el tipo "Regular"
+        saved_speech_types = [s for s in saved_speech_types if s["name"] != name]
+        return f"Eliminado: {name}"
+    return "No se puede eliminar el tipo Regular."
 
 
 def update_saved_speech_types():
     """Actualiza la lista de tipos guardados en el menú desplegable."""
-    return gr.update(choices=[s["name"] for s in saved_speech_types])
+    return [s["name"] for s in saved_speech_types]
 
 
 def generate_text_with_type(name):
@@ -154,7 +156,11 @@ with gr.Blocks() as app:
         speech_type_save_btns.append(save_btn)
         speech_type_delete_btns.append(delete_btn)
 
-    saved_speech_types_dropdown = gr.Dropdown(label="Seleccionar Tipo Guardado", choices=[], interactive=True)
+    saved_speech_types_dropdown = gr.Dropdown(
+        label="Seleccionar Tipo Guardado",
+        choices=update_saved_speech_types(),
+        interactive=True,
+    )
     add_text_with_speech_type_btn = gr.Button("Agregar Texto con Tipo de Habla")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
     generate_btn = gr.Button("Generar Habla Multi-Estilo", variant="primary")
@@ -187,21 +193,18 @@ with gr.Blocks() as app:
         save_btn.click(
             save_speech_type,
             inputs=[speech_type_names[i], speech_type_audios[i], speech_type_ref_texts[i]],
-            outputs=progress_bar,
-            postprocess=update_saved_speech_types,
+            outputs=[progress_bar, saved_speech_types_dropdown],
         )
         delete_btn.click(
             delete_speech_type,
             inputs=speech_type_names[i],
-            outputs=progress_bar,
-            postprocess=update_saved_speech_types,
+            outputs=[progress_bar, saved_speech_types_dropdown],
         )
 
     regular_save_btn.click(
         save_speech_type,
         inputs=[regular_name, regular_audio, regular_ref_text],
-        outputs=progress_bar,
-        postprocess=update_saved_speech_types,
+        outputs=[progress_bar, saved_speech_types_dropdown],
     )
 
     add_text_with_speech_type_btn.click(
