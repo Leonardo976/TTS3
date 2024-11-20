@@ -98,8 +98,8 @@ def save_speech_type(name, audio_path, text):
     """Guarda un tipo de habla en la lista global."""
     if name and name not in [s["name"] for s in saved_speech_types]:
         saved_speech_types.append({"name": name, "audio": audio_path, "text": text})
-        return f"Guardado: {name}", [s["name"] for s in saved_speech_types]
-    return "El nombre ya existe o no es válido.", [s["name"] for s in saved_speech_types]
+        return f"Guardado: {name}", saved_speech_types
+    return "El nombre ya existe o no es válido.", saved_speech_types
 
 
 def delete_speech_type(name):
@@ -107,8 +107,8 @@ def delete_speech_type(name):
     global saved_speech_types
     if name != "Regular":  # Proteger el tipo "Regular"
         saved_speech_types = [s for s in saved_speech_types if s["name"] != name]
-        return f"Eliminado: {name}", [s["name"] for s in saved_speech_types]
-    return "No se puede eliminar el tipo Regular.", [s["name"] for s in saved_speech_types]
+        return f"Eliminado: {name}", saved_speech_types
+    return "No se puede eliminar el tipo Regular.", saved_speech_types
 
 
 def generate_text_with_type(name):
@@ -126,29 +126,10 @@ with gr.Blocks() as app:
         regular_ref_text = gr.Textbox(label="Texto de Referencia (Regular)", lines=2)
         regular_save_btn = gr.Button("Guardar")
 
-    max_speech_types = 10
-    speech_type_rows = []
-    speech_type_names = []
-    speech_type_audios = []
-    speech_type_ref_texts = []
-    speech_type_save_btns = []
-    speech_type_delete_btns = []
+    speech_type_list = gr.State(value=saved_speech_types)
+    speech_type_list_display = gr.Dataframe(label="Tipos de Habla Guardados", interactive=False)
 
-    # Dynamic speech types
-    for _ in range(max_speech_types):
-        row = gr.Row(visible=False)
-        with row:
-            name_input = gr.Textbox(label="Nombre del Tipo de Habla")
-            audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
-            ref_text_input = gr.Textbox(label="Texto de Referencia", lines=2)
-            save_btn = gr.Button("Guardar")
-            delete_btn = gr.Button("Eliminar")
-        speech_type_rows.append(row)
-        speech_type_names.append(name_input)
-        speech_type_audios.append(audio_input)
-        speech_type_ref_texts.append(ref_text_input)
-        speech_type_save_btns.append(save_btn)
-        speech_type_delete_btns.append(delete_btn)
+    remove_silence_checkbox = gr.Checkbox(value=False, label="Eliminar Silencios")
 
     saved_speech_types_dropdown = gr.Dropdown(
         label="Seleccionar Tipo Guardado",
@@ -161,44 +142,21 @@ with gr.Blocks() as app:
     audio_output = gr.Audio(label="Audio Sintetizado")
     progress_bar = gr.Textbox(label="Progreso", interactive=True, lines=5)
 
-    # General button to add new speech types
-    add_speech_type_btn = gr.Button("Agregar Nuevo Tipo de Habla")
+    def update_speech_types():
+        return saved_speech_types
 
-    def toggle_speech_type_row(index):
-        """Muestra u oculta filas adicionales de tipos de habla."""
-        return gr.update(visible=True)
+    def save_type(name, audio_path, text):
+        message, updated_list = save_speech_type(name, audio_path, text)
+        return message, updated_list
 
-    # Logic for adding new speech types
-    speech_type_count = gr.State(value=0)
-
-    def add_speech_type_fn(count):
-        if count < max_speech_types:
-            return count + 1, *[gr.update(visible=i < count + 1) for i in range(max_speech_types)]
-        return count, *[gr.update() for _ in range(max_speech_types)]
-
-    add_speech_type_btn.click(
-        add_speech_type_fn,
-        inputs=speech_type_count,
-        outputs=[speech_type_count] + speech_type_rows,
-    )
-
-    # Save and delete logic for each speech type
-    for i, (save_btn, delete_btn) in enumerate(zip(speech_type_save_btns, speech_type_delete_btns)):
-        save_btn.click(
-            save_speech_type,
-            inputs=[speech_type_names[i], speech_type_audios[i], speech_type_ref_texts[i]],
-            outputs=[progress_bar, saved_speech_types_dropdown],
-        )
-        delete_btn.click(
-            delete_speech_type,
-            inputs=speech_type_names[i],
-            outputs=[progress_bar, saved_speech_types_dropdown],
-        )
+    def delete_type(name):
+        message, updated_list = delete_speech_type(name)
+        return message, updated_list
 
     regular_save_btn.click(
-        save_speech_type,
+        save_type,
         inputs=[regular_name, regular_audio, regular_ref_text],
-        outputs=[progress_bar, saved_speech_types_dropdown],
+        outputs=[progress_bar, speech_type_list_display],
     )
 
     add_text_with_speech_type_btn.click(
@@ -209,12 +167,12 @@ with gr.Blocks() as app:
 
     @gpu_decorator
     def generate_multistyle_audio(
-        regular_audio, regular_ref_text, gen_text, *args
+        regular_audio, regular_ref_text, gen_text, remove_silence, *args
     ):
         """Genera el audio concatenando segmentos de diferentes estilos."""
-        speech_type_names = args[:max_speech_types]
-        speech_type_audios = args[max_speech_types : 2 * max_speech_types]
-        speech_type_ref_texts = args[2 * max_speech_types :]
+        speech_type_names = [s["name"] for s in saved_speech_types]
+        speech_type_audios = [s["audio"] for s in saved_speech_types]
+        speech_type_ref_texts = [s["text"] for s in saved_speech_types]
 
         speech_types = {"Regular": {"audio": regular_audio, "ref_text": regular_ref_text}}
         for name, audio, ref_text in zip(speech_type_names, speech_type_audios, speech_type_ref_texts):
@@ -229,7 +187,7 @@ with gr.Blocks() as app:
             text = segment["text"]
             if style in speech_types:
                 sr, audio = infer(
-                    speech_types[style]["audio"], speech_types[style]["ref_text"], text, F5TTS_ema_model, False
+                    speech_types[style]["audio"], speech_types[style]["ref_text"], text, F5TTS_ema_model, remove_silence
                 )
                 audio_segments.append(audio)
 
@@ -240,10 +198,7 @@ with gr.Blocks() as app:
 
     generate_btn.click(
         generate_multistyle_audio,
-        inputs=[regular_audio, regular_ref_text, gen_text_input]
-        + speech_type_names
-        + speech_type_audios
-        + speech_type_ref_texts,
+        inputs=[regular_audio, regular_ref_text, gen_text_input, remove_silence_checkbox],
         outputs=audio_output,
     )
 
