@@ -4,7 +4,6 @@
 import os
 import re
 import tempfile
-
 import click
 import gradio as gr
 import numpy as np
@@ -12,21 +11,6 @@ import soundfile as sf
 import torchaudio
 from cached_path import cached_path
 from num2words import num2words
-
-try:
-    import spaces
-    USING_SPACES = True
-except ImportError:
-    USING_SPACES = False
-
-
-def gpu_decorator(func):
-    if USING_SPACES:
-        return spaces.GPU(func)
-    else:
-        return func
-
-
 from f5_tts.model import DiT
 from f5_tts.infer.utils_infer import (
     load_vocoder,
@@ -60,97 +44,129 @@ def traducir_numero_a_texto(texto):
     texto_traducido = re.sub(r'\b\d+\b', reemplazar_numero, texto_separado)
     return texto_traducido
 
-@gpu_decorator
-def infer(
-    ref_audio_orig, ref_text, gen_text, remove_silence, cross_fade_duration=0.15, speed=1.0, show_info=gr.Info
+def parse_emotions_text(gen_text):
+    pattern = r"\{(.*?)\}"  # Capturar emociones en formato {Emotion}
+    tokens = re.split(pattern, gen_text)
+    segments = []
+    current_emotion = "Regular"  # Emoción predeterminada
+
+    for i, token in enumerate(tokens):
+        if i % 2 == 0:  # Texto
+            text = token.strip()
+            if text:
+                segments.append({"emotion": current_emotion, "text": text})
+        else:  # Emoción
+            current_emotion = token.strip()
+
+    return segments
+
+def infer_multi_emotion(
+    ref_audio_orig,
+    ref_text,
+    gen_text,
+    emotions_audio_map,
+    remove_silence=False,
+    show_info=print,
 ):
-    ref_audio, ref_text = preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=show_info)
+    segments = parse_emotions_text(gen_text)
+    generated_audio = []
 
-    if not gen_text.startswith(" "):
-        gen_text = " " + gen_text
-    if not gen_text.endswith(". "):
-        gen_text += ". "
+    for segment in segments:
+        emotion = segment["emotion"]
+        text = segment["text"]
 
-    gen_text = traducir_numero_a_texto(gen_text.lower())
+        if emotion in emotions_audio_map:
+            ref_audio = emotions_audio_map[emotion]["audio"]
+            ref_text_emotion = emotions_audio_map[emotion].get("ref_text", ref_text)
+        else:  # Emoción no encontrada, usar "Regular"
+            ref_audio = emotions_audio_map["Regular"]["audio"]
+            ref_text_emotion = emotions_audio_map["Regular"].get("ref_text", ref_text)
 
-    final_wave, final_sample_rate, combined_spectrogram = infer_process(
-        ref_audio,
-        ref_text,
-        gen_text,
-        F5TTS_ema_model,
-        vocoder,
-        cross_fade_duration=cross_fade_duration,
-        speed=speed,
-        show_info=show_info,
-        progress=gr.Progress(),
+        audio, _ = infer_process(
+            ref_audio,
+            ref_text_emotion,
+            text,
+            F5TTS_ema_model,
+            vocoder,
+            cross_fade_duration=0.15,
+            speed=1.0,
+            show_info=show_info,
+        )
+        sr, audio_data = audio
+        generated_audio.append(audio_data)
+
+    if generated_audio:
+        final_audio = np.concatenate(generated_audio)
+        return sr, final_audio
+    return None
+
+# Construir la interfaz Gradio
+with gr.Blocks() as app_tts_multihabla:
+    gr.Markdown("# F5-TTS en Español - Multi-Habla")
+
+    # Tipo de habla regular obligatorio
+    with gr.Row():
+        regular_audio = gr.Audio(label="Audio de Referencia Regular", type="filepath")
+        regular_ref_text = gr.Textbox(label="Texto de Referencia Regular", lines=2)
+
+    # Emociones adicionales
+    emotions = gr.State(value={})  # Guardar audios y textos asociados a emociones
+    emotion_name = gr.Textbox(label="Nombre de la Emoción (ej: Alegre)", placeholder="Escribe el nombre de la emoción")
+    emotion_audio = gr.Audio(label="Audio de Referencia para la Emoción", type="filepath")
+    emotion_ref_text = gr.Textbox(label="Texto de Referencia para la Emoción", lines=2)
+    add_emotion_btn = gr.Button("Agregar Emoción")
+
+    def add_emotion(emotions, emotion_name, emotion_audio, emotion_ref_text):
+        if not emotion_name or not emotion_audio:
+            return gr.update(), gr.update(), emotions  # No hacer nada si faltan datos
+        emotions[emotion_name] = {"audio": emotion_audio, "ref_text": emotion_ref_text}
+        return gr.update(value=""), gr.update(value=None), emotions
+
+    add_emotion_btn.click(
+        add_emotion,
+        inputs=[emotions, emotion_name, emotion_audio, emotion_ref_text],
+        outputs=[emotion_name, emotion_audio, emotions],
     )
 
-    if remove_silence:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-            sf.write(f.name, final_wave, final_sample_rate)
-            remove_silence_for_generated_wav(f.name)
-            final_wave, _ = torchaudio.load(f.name)
-        final_wave = final_wave.squeeze().cpu().numpy()
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_spectrogram:
-        spectrogram_path = tmp_spectrogram.name
-        save_spectrogram(combined_spectrogram, spectrogram_path)
-
-    return (final_sample_rate, final_wave), spectrogram_path
-
-
-# Definir la aplicación como una variable global
-app = gr.Blocks()
-
-with app:
-    gr.Markdown("# F5-TTS en Español")
-    ref_audio_input = gr.Audio(label="Audio de Referencia", type="filepath")
-    gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
-    generate_btn = gr.Button("Generar", variant="primary")
-
-    with gr.Accordion("Configuraciones Avanzadas", open=False):
-        ref_text_input = gr.Textbox(
-            label="Texto de Referencia (opcional)",
-            lines=2,
-        )
-        remove_silence = gr.Checkbox(
-            label="Eliminar Silencios",
-            value=False,
-        )
-        speed_slider = gr.Slider(
-            label="Velocidad",
-            minimum=0.3,
-            maximum=2.0,
-            value=1.0,
-            step=0.1,
-        )
-        cross_fade_duration_slider = gr.Slider(
-            label="Duración de Cross-Fade (s)",
-            minimum=0.0,
-            maximum=1.0,
-            value=0.15,
-            step=0.01,
-        )
-
+    # Texto y botón para generar
+    gen_text_input = gr.Textbox(
+        label="Texto para Generar",
+        lines=10,
+        placeholder="Ejemplo: {Alegre} Hola, ¿cómo estás? {Triste} Estoy un poco cansado."
+    )
+    remove_silence_checkbox = gr.Checkbox(label="Eliminar Silencios", value=False)
+    generate_btn = gr.Button("Generar Multi-Habla", variant="primary")
     audio_output = gr.Audio(label="Audio Generado")
-    spectrogram_output = gr.Image(label="Espectrograma")
+
+    def generate_audio(regular_audio, regular_ref_text, gen_text, emotions, remove_silence):
+        if not regular_audio or not gen_text:
+            return None  # No generar si faltan datos básicos
+
+        emotions_audio_map = {"Regular": {"audio": regular_audio, "ref_text": regular_ref_text}}
+        emotions_audio_map.update(emotions)  # Agregar emociones personalizadas
+
+        result = infer_multi_emotion(
+            regular_audio,
+            regular_ref_text,
+            gen_text,
+            emotions_audio_map,
+            remove_silence=remove_silence,
+        )
+        if result:
+            sr, audio = result
+            return sr, audio
+        return None
 
     generate_btn.click(
-        infer,
-        inputs=[
-            ref_audio_input,
-            ref_text_input,
-            gen_text_input,
-            remove_silence,
-            cross_fade_duration_slider,
-            speed_slider,
-        ],
-        outputs=[audio_output, spectrogram_output],
+        generate_audio,
+        inputs=[regular_audio, regular_ref_text, gen_text_input, emotions, remove_silence_checkbox],
+        outputs=[audio_output],
     )
 
+# Comando principal para lanzar Gradio
 @click.command()
 @click.option("--port", "-p", default=None, type=int, help="Puerto para ejecutar la aplicación")
-@click.option("--host", "-H", default=None, help="Host para ejecutar la aplicación")
+@click.option("--host", "-H", default="0.0.0.0", help="Host para ejecutar la aplicación")
 @click.option(
     "--share",
     "-s",
@@ -158,12 +174,8 @@ with app:
     is_flag=True,
     help="Compartir la aplicación a través de un enlace compartido de Gradio",
 )
-@click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
-def main(port, host, share, api):
-    global app
-    print("Iniciando la aplicación...")
-    # Asegúrate de que `share=True`
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
+def main(port, host, share):
+    app_tts_multihabla.queue().launch(server_name=host, server_port=port, share=share)
 
 
 if __name__ == "__main__":
