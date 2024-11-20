@@ -421,6 +421,18 @@ with gr.Blocks() as app_multistyle:
         outputs=generate_multistyle_btn,
     )
 
+with gr.Blocks() as app:
+    gr.Markdown(
+        """
+# Spanish-F5
+
+Esta es una interfaz web para F5 TTS, con un finetuning para poder clonar voces
+    )
+    gr.TabbedInterface(
+        [app_multistyle],
+        ["Multi-Habla"],
+    )
+
 @click.command()
 @click.option("--port", "-p", default=None, type=int, help="Puerto para ejecutar la aplicación")
 @click.option("--host", "-H", default=None, help="Host para ejecutar la aplicación")
