@@ -90,6 +90,20 @@ def parse_speechtypes_text(gen_text):
     return segments
 
 
+saved_speech_types = []
+
+
+def save_speech_type(name, audio_path, text):
+    """Guarda un tipo de habla en la lista global."""
+    saved_speech_types.append({"name": name, "audio": audio_path, "text": text})
+    return f"Guardado: {name}"
+
+
+def generate_text_with_type(name):
+    """Genera un bloque de texto con un tipo de habla seleccionado."""
+    return f"{{{name}}} "
+
+
 with gr.Blocks() as app:
     gr.Markdown("# Generación de Múltiples Tipos de Habla")
 
@@ -117,9 +131,13 @@ with gr.Blocks() as app:
         speech_type_ref_texts.append(ref_text_input)
 
     add_speech_type_btn = gr.Button("Agregar Tipo de Habla")
+    save_speech_type_btn = gr.Button("Guardar Tipo de Habla")
+    saved_speech_types_dropdown = gr.Dropdown(label="Seleccionar Tipo Guardado", choices=[], interactive=True)
+    add_text_with_speech_type_btn = gr.Button("Agregar Texto con Tipo de Habla")
     gen_text_input = gr.Textbox(label="Texto para Generar", lines=10)
     generate_btn = gr.Button("Generar Habla Multi-Estilo", variant="primary")
     audio_output = gr.Audio(label="Audio Sintetizado")
+    progress_bar = gr.Textbox(label="Progreso", interactive=False)
 
     def toggle_speech_type_row(count):
         """Muestra u oculta filas adicionales de tipos de habla."""
@@ -130,11 +148,29 @@ with gr.Blocks() as app:
 
     add_speech_type_btn.click(toggle_speech_type_row, inputs=[speech_type_count], outputs=[speech_type_count, *speech_type_rows])
 
+    def update_saved_speech_types():
+        """Actualiza la lista de tipos guardados en el menú desplegable."""
+        return gr.update(choices=[s["name"] for s in saved_speech_types])
+
+    save_speech_type_btn.click(
+        save_speech_type,
+        inputs=[regular_name, regular_audio, regular_ref_text],
+        outputs=progress_bar,
+        postprocess=update_saved_speech_types,
+    )
+
+    add_text_with_speech_type_btn.click(
+        generate_text_with_type,
+        inputs=saved_speech_types_dropdown,
+        outputs=gen_text_input,
+    )
+
     @gpu_decorator
     def generate_multistyle_audio(
-        regular_audio, regular_ref_text, gen_text, *args
+        regular_audio, regular_ref_text, gen_text, progress, *args
     ):
         """Genera el audio concatenando segmentos de diferentes estilos."""
+        progress.append("Inicio de la generación...")
         speech_type_names = args[:max_speech_types]
         speech_type_audios = args[max_speech_types : 2 * max_speech_types]
         speech_type_ref_texts = args[2 * max_speech_types :]
@@ -147,15 +183,17 @@ with gr.Blocks() as app:
         segments = parse_speechtypes_text(gen_text)
         audio_segments = []
 
-        for segment in segments:
+        for i, segment in enumerate(segments):
             style = segment["style"]
             text = segment["text"]
+            progress.append(f"Procesando segmento {i + 1}/{len(segments)}: {style}")
             if style in speech_types:
                 sr, audio = infer(
                     speech_types[style]["audio"], speech_types[style]["ref_text"], text, F5TTS_ema_model, False
                 )
                 audio_segments.append(audio)
 
+        progress.append("Finalizando la generación...")
         if audio_segments:
             return sr, np.concatenate(audio_segments)
         else:
@@ -163,11 +201,11 @@ with gr.Blocks() as app:
 
     generate_btn.click(
         generate_multistyle_audio,
-        inputs=[regular_audio, regular_ref_text, gen_text_input]
+        inputs=[regular_audio, regular_ref_text, gen_text_input, progress_bar]
         + speech_type_names
         + speech_type_audios
         + speech_type_ref_texts,
-        outputs=audio_output,
+        outputs=[audio_output, progress_bar],
     )
 
 
