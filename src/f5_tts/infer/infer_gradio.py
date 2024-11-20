@@ -427,19 +427,23 @@ with gr.Blocks() as app_multistyle:
 @click.option(
     "--share",
     "-s",
-    default=False,
+    default=True,
     is_flag=True,
-    help="Compartir la aplicación a través de un enlace compartido de Gradio",
+    help="Siempre habilitar el enlace live (Gradio public URL).",
 )
 @click.option("--api", "-a", default=True, is_flag=True, help="Permitir acceso a la API")
 def main(port, host, share, api):
-    global app
+    """
+    Ejecuta la aplicación Multi-Habla con las configuraciones de Gradio.
+    """
     print("Iniciando la aplicación...")
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
+    app.queue(api_open=api).launch(
+        server_name=host,
+        server_port=port,
+        share=True,  # Siempre habilitar el live
+        show_api=api,
+    )
 
 
 if __name__ == "__main__":
-    if not USING_SPACES:
-        main()
-    else:
-        app.queue().launch()
+    main()
