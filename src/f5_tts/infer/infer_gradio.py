@@ -162,7 +162,8 @@ with app:
 def main(port, host, share, api):
     global app
     print("Iniciando la aplicación...")
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=share, show_api=api)
+    # Asegúrate de que `share=True`
+    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
 
 
 if __name__ == "__main__":
